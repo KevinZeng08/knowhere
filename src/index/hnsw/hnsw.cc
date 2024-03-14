@@ -170,7 +170,12 @@ class HnswIndexNode : public IndexNode {
         auto xq = dataset.GetTensor();
 
         auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
-        auto k = hnsw_cfg.k.value();
+        // if we have specific rerank topk, use it, otherwise use topk
+         auto real_k = hnsw_cfg.k.value();
+         auto k = real_k;
+        if (hnsw_cfg.rerank_k.has_value()) {
+            k = hnsw_cfg.rerank_k.value();
+        }
 
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
@@ -180,10 +185,10 @@ class HnswIndexNode : public IndexNode {
             feder_result = std::make_unique<feder::hnsw::FederResult>();
         }
 
-        auto p_id = std::make_unique<int64_t[]>(k * nq);
-        auto p_dist = std::make_unique<DistType[]>(k * nq);
+        auto p_id = std::make_unique<int64_t[]>(real_k * nq);
+        auto p_dist = std::make_unique<DistType[]>(real_k * nq);
 
-        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value()};
+        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value(), (size_t)hnsw_cfg.dim.value(), (size_t)real_k};
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
 
@@ -194,14 +199,14 @@ class HnswIndexNode : public IndexNode {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
                 size_t rst_size = rst.size();
-                auto p_single_dis = p_dist_ptr + idx * k;
-                auto p_single_id = p_id_ptr + idx * k;
+                auto p_single_dis = p_dist_ptr + idx * real_k;
+                auto p_single_id = p_id_ptr + idx * real_k;
                 for (size_t idx = 0; idx < rst_size; ++idx) {
                     const auto& [dist, id] = rst[idx];
                     p_single_dis[idx] = transform ? (-dist) : dist;
                     p_single_id[idx] = id;
                 }
-                for (size_t idx = rst_size; idx < (size_t)k; idx++) {
+                for (size_t idx = rst_size; idx < (size_t)real_k; idx++) {
                     p_single_dis[idx] = DistType(1.0 / 0.0);
                     p_single_id[idx] = -1;
                 }
@@ -209,7 +214,7 @@ class HnswIndexNode : public IndexNode {
         }
         WaitAllSuccess(futs);
 
-        auto res = GenResultDataSet(nq, k, p_id.release(), p_dist.release());
+        auto res = GenResultDataSet(nq, real_k, p_id.release(), p_dist.release());
 
         // set visit_info json string into result dataset
         if (feder_result != nullptr) {

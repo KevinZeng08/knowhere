@@ -32,6 +32,8 @@ class HnswConfig : public BaseConfig {
     CFG_INT ef;
     CFG_INT seed_ef;
     CFG_INT overview_levels;
+    CFG_INT dim;
+    CFG_INT rerank_k;
     KNOHWERE_DECLARE_CONFIG(HnswConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(M).description("hnsw M").set_default(30).set_range(2, 2048).for_train();
         KNOWHERE_CONFIG_DECLARE_FIELD(efConstruction)
@@ -55,6 +57,18 @@ class HnswConfig : public BaseConfig {
             .set_default(3)
             .set_range(1, 5)
             .for_feder();
+        KNOWHERE_CONFIG_DECLARE_FIELD(dim)
+            .description("hnsw query vector dimension")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_search()
+            .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(rerank_k)
+            .description("hnsw rerank search topk")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_search()
+            .for_range_search();
     }
 
     Status

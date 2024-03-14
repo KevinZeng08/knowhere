@@ -1,10 +1,13 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 #include "common/lru_cache.h"
 #include "io/file_io.h"
@@ -292,26 +295,37 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     inline dist_t
-    calcDistance(const tableint id1, const tableint id2) const {
+    calcDistance(const tableint id1, const tableint id2, size_t dim = -1) const {
         if constexpr (sq_enabled) {
             return fstdistfunc_sq_(getSQDataByInternalId(id1), getSQDataByInternalId(id2), dist_func_param_) * alpha_ *
                    alpha_ / 127.0f / 127.0f;
         } else {
-            dist_t dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
+            dist_t dist;
+            if (dim == -1) {
+                dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
+            } else {
+                dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), (void*)&dim);
+            }
+            // dist_t dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
             if (metric_type_ == Metric::COSINE) {
-                dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]);
+                dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]); // TODO sliced dims, norm change
             }
             return dist;
         }
     }
 
     inline dist_t
-    calcDistance(const void* vec, const tableint id) const {
+    calcDistance(const void* vec, const tableint id, size_t dim = -1) const {
         if constexpr (sq_enabled) {
             return fstdistfunc_sq_(vec, getSQDataByInternalId(id), dist_func_param_) * alpha_ * alpha_ / 127.0f /
                    127.0f;
         } else {
-            dist_t dist = fstdistfunc_(vec, getDataByInternalId(id), dist_func_param_);
+            dist_t dist;
+            if (dim == -1) {
+                dist = fstdistfunc_(vec, getDataByInternalId(id), dist_func_param_);
+            } else {
+                dist = fstdistfunc_(vec, getDataByInternalId(id), (void*)&dim);
+            }
             if (metric_type_ == Metric::COSINE) {
                 dist /= data_norm_l2_[id];
             }
@@ -412,7 +426,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     inline void
     searchBaseLayerSTNext(const void* data_point, Neighbor next, std::vector<bool>& visited, float& accumulative_alpha,
                           const knowhere::BitsetView& bitset, AddSearchCandidate& add_search_candidate,
-                          const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+                          const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr, size_t dim = -1) const {
         auto [u, d, s] = next;
         tableint* list = (tableint*)get_linklist0(u);
         int size = list[0];
@@ -446,7 +460,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
                 accumulative_alpha -= 1.0f;
             }
-            dist_t dist = calcDistance(data_point, v);
+            dist_t dist = calcDistance(data_point, v, dim);
             if (feder_result != nullptr) {
                 feder_result->visit_info_.AddVisitRecord(0, u, v, dist);
                 feder_result->id_set_.insert(u);
@@ -470,13 +484,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     searchBaseLayerST(tableint ep_id, const void* data_point, size_t ef, std::vector<bool>& visited,
                       const knowhere::BitsetView& bitset,
                       const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr,
-                      IteratorMinHeap* disqualified = nullptr, float accumulative_alpha = 0.0f) const {
+                      IteratorMinHeap* disqualified = nullptr, float accumulative_alpha = 0.0f, size_t dim = -1) const {
         if (feder_result != nullptr) {
             feder_result->visit_info_.AddLevelVisitRecord(0);
         }
+        if (dim == -1) {
+            dim = *(size_t*)dist_func_param_;
+        }
         NeighborSetDoublePopList retset(ef);
 
-        dist_t dist = calcDistance(data_point, ep_id);
+        dist_t dist = calcDistance(data_point, ep_id, dim);
         if (!has_deletions || !bitset.test((int64_t)ep_id)) {
             retset.insert(Neighbor(ep_id, dist, Neighbor::kValid));
         } else {
@@ -488,7 +505,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t hops = 0;
         while (retset.has_next()) {
             searchBaseLayerSTNext<decltype(add_search_candidate), has_deletions, collect_metrics>(
-                data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result);
+                data_point, retset.pop(), visited, accumulative_alpha, bitset, add_search_candidate, feder_result, dim);
             hops++;
         }
 #ifdef NOT_COMPILE_FOR_SWIG
@@ -1292,6 +1309,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     std::pair<tableint, int64_t>
     searchTopLayers(const void* query_data, const SearchParam* param = nullptr,
                     const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
+        size_t dim = param ? (param->dim_ != -1 ? param->dim_ : *(size_t*)dist_func_param_) : *(size_t*)dist_func_param_;
         tableint currObj = enterpoint_node_;
         uint64_t vec_hash;
         if (metric_type_ == Metric::HAMMING || metric_type_ == Metric::JACCARD) {
@@ -1305,7 +1323,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         // for tuning, do not use cache
         if ((param && param->for_tuning) || !lru_cache.try_get(vec_hash, currObj)) {
-            dist_t curdist = calcDistance(query_data, enterpoint_node_);
+            dist_t curdist = calcDistance(query_data, enterpoint_node_, dim);
 
             for (int level = maxlevel_; level > 0; level--) {
                 bool changed = true;
@@ -1328,7 +1346,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         tableint cand = datal[i];
                         if (cand < 0 || cand > max_elements_)
                             throw std::runtime_error("cand error");
-                        dist_t d = calcDistance(query_data, cand);
+                        dist_t d = calcDistance(query_data, cand, dim);
                         if (feder_result != nullptr) {
                             feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
                             feder_result->id_set_.insert(currObj);
@@ -1348,10 +1366,29 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
+    truncatedVectorRefine(const void* query_data, size_t k, const std::vector<std::pair<dist_t, labeltype>>& candidates) const {
+        knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(k);
+        for (const auto& candidate : candidates) {
+            dist_t dist = calcDistance(query_data, candidate.second);
+            max_heap.Push(dist, candidate.second);
+        }
+        const size_t len = std::min(max_heap.Size(), k);
+        std::vector<std::pair<dist_t, labeltype>> result(len);
+        for (int64_t i = len - 1; i >= 0; --i) {
+            const auto op = max_heap.Pop();
+            result[i] = op.value();
+        }
+        return result;
+    }
+
+    std::vector<std::pair<dist_t, labeltype>>
     searchKnn(const void* query_data, size_t k, const knowhere::BitsetView bitset, const SearchParam* param = nullptr,
               const knowhere::feder::hnsw::FederResultUniq& feder_result = nullptr) const {
         if (cur_element_count == 0 || bitset.count() == cur_element_count)
             return {};
+        
+        size_t sliced_dim = param ? (param->dim_ != -1 ? param->dim_ : *(size_t*)dist_func_param_ ): *(size_t*)dist_func_param_;
+        size_t real_k = param ? (param->k_ != -1 ? param->k_ : k) : k;
 
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
@@ -1390,10 +1427,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t ef = param ? param->ef_ : this->ef_;
         auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
-            retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result);
+            retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, sliced_dim);
         } else {
             retset =
-                searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result);
+                searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, sliced_dim);
         }
         std::vector<std::pair<dist_t, labeltype>> result;
         size_t len = std::min(k, retset.size());
@@ -1415,6 +1452,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (len > 0) {
             lru_cache.put(vec_hash, result[0].second);
         }
+        
+        // refine for bigger K
+        if (k > real_k) {
+            result = truncatedVectorRefine(query_data, real_k, result);
+        }
+
         return result;
     };
 

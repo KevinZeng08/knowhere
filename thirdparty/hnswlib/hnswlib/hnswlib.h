@@ -176,6 +176,8 @@ class SpaceInterface {
 struct SearchParam {
     size_t ef_;
     bool for_tuning;
+    size_t dim_ = -1; // query vector dimension
+    size_t k_ = -1; // real topk
 };
 
 struct IteratorWorkspace {
