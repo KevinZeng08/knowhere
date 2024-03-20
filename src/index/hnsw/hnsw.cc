@@ -22,6 +22,7 @@
 #include "knowhere/comp/thread_pool.h"
 #include "knowhere/comp/time_recorder.h"
 #include "knowhere/config.h"
+#include "knowhere/dataset.h"
 #include "knowhere/expected.h"
 #include "knowhere/factory.h"
 #include "knowhere/index_node_data_mock_wrapper.h"
@@ -166,16 +167,30 @@ class HnswIndexNode : public IndexNode {
             LOG_KNOWHERE_WARNING_ << "search on empty index";
             return expected<DataSetPtr>::Err(Status::empty_index, "index not loaded");
         }
+        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
+        // if search dimension is truncated and we don't have raw data, we are unable to refine the result, so return error
+        auto truncated_dim = hnsw_cfg.dim.value();
+        auto query_dim = dataset.GetDim(); // query dimension should be equal to the index dimension, checked in Milvus
+        bool has_raw_data = HasRawData(hnsw_cfg.metric_type.value());
+
+        if (truncated_dim > 0 && truncated_dim < query_dim && !has_raw_data) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "unsupport: search dimension is truncated and index has no raw data");
+        }
+
+        // if we have specific reorder topk, use it, otherwise use topk
+        auto real_k = hnsw_cfg.k.value();
+        auto k = real_k;
+        if (hnsw_cfg.refine_k.has_value()) {
+            k = hnsw_cfg.refine_k.value();
+        }
+
+        // if refine topk is larger than topk and we don't have raw data, return error
+        if (k > real_k && !has_raw_data) {
+            return expected<DataSetPtr>::Err(Status::invalid_args, "unsupport: refine topk is larger than topk and index has no raw data");
+        }
+
         auto nq = dataset.GetRows();
         auto xq = dataset.GetTensor();
-
-        auto hnsw_cfg = static_cast<const HnswConfig&>(cfg);
-        // if we have specific rerank topk, use it, otherwise use topk
-         auto real_k = hnsw_cfg.k.value();
-         auto k = real_k;
-        if (hnsw_cfg.rerank_k.has_value()) {
-            k = hnsw_cfg.rerank_k.value();
-        }
 
         feder::hnsw::FederResultUniq feder_result;
         if (hnsw_cfg.trace_visit.value()) {
@@ -188,7 +203,8 @@ class HnswIndexNode : public IndexNode {
         auto p_id = std::make_unique<int64_t[]>(real_k * nq);
         auto p_dist = std::make_unique<DistType[]>(real_k * nq);
 
-        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value(), (size_t)hnsw_cfg.dim.value(), (size_t)real_k};
+        hnswlib::SearchParam param{(size_t)hnsw_cfg.ef.value(), hnsw_cfg.for_tuning.value(),
+                                   (size_t)truncated_dim};
         bool transform =
             (index_->metric_type_ == hnswlib::Metric::INNER_PRODUCT || index_->metric_type_ == hnswlib::Metric::COSINE);
 
@@ -198,6 +214,10 @@ class HnswIndexNode : public IndexNode {
             futs.emplace_back(search_pool_->push([&, idx = i, p_id_ptr = p_id.get(), p_dist_ptr = p_dist.get()]() {
                 auto single_query = (const char*)xq + idx * index_->data_size_;
                 auto rst = index_->searchKnn(single_query, k, bitset, &param, feder_result);
+                // larger than topk or truncated dimension, refine the result
+                if (k > real_k || (k == real_k && truncated_dim < query_dim)) {
+                    rst = index_->refine(single_query, real_k, rst);
+                }
                 size_t rst_size = rst.size();
                 auto p_single_dis = p_dist_ptr + idx * real_k;
                 auto p_single_id = p_id_ptr + idx * real_k;

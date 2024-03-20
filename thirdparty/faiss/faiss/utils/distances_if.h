@@ -237,23 +237,25 @@ void internal_fvec_inner_products_ny_if(
         const size_t ny,
         Pred pred,
         IndexRemapper remapper,
-        Apply apply) {
+        Apply apply,
+        size_t truncated_dim = -1) {
     using idx_type = std::invoke_result_t<IndexRemapper, size_t>;
+    size_t calc_dim = (truncated_dim == -1) ? d : truncated_dim;
 
     // compute a distance from the query to 1 element
-    auto distance1 = [x, y, d](const idx_type idx) { 
-        return fvec_inner_product(x, y + idx * d, d); 
+    auto distance1 = [x, y, d, calc_dim](const idx_type idx) { 
+        return fvec_inner_product(x, y + idx * d, calc_dim); 
     };
 
     // compute distances from the query to 4 elements
-    auto distance4 = [x, y, d](const std::array<idx_type, 4> indices, std::array<float, 4>& dis) { 
+    auto distance4 = [x, y, d, calc_dim](const std::array<idx_type, 4> indices, std::array<float, 4>& dis) { 
         fvec_inner_product_batch_4(
             x,
             y + indices[0] * d,
             y + indices[1] * d,
             y + indices[2] * d,
             y + indices[3] * d,
-            d,
+            calc_dim,
             dis[0],
             dis[1],
             dis[2],
@@ -294,23 +296,24 @@ void internal_fvec_L2sqr_ny_if(
         const size_t ny,
         Pred pred,
         IndexRemapper remapper,
-        Apply apply) {    
+        Apply apply,
+        size_t truncated_dim = -1) {    
     using idx_type = std::invoke_result_t<IndexRemapper, size_t>;
-
+    size_t calc_dim = (truncated_dim == -1) ? d : truncated_dim;
     // compute a distance from the query to 1 element
-    auto distance1 = [x, y, d](const idx_type idx) { 
-        return fvec_L2sqr(x, y + idx * d, d); 
+    auto distance1 = [x, y, d, calc_dim](const idx_type idx) { 
+        return fvec_L2sqr(x, y + idx * d, calc_dim); 
     };
 
     // compute distances from the query to 4 elements
-    auto distance4 = [x, y, d](const std::array<idx_type, 4> indices, std::array<float, 4>& dis) { 
+    auto distance4 = [x, y, d, calc_dim](const std::array<idx_type, 4> indices, std::array<float, 4>& dis) { 
         fvec_L2sqr_batch_4(
             x,
             y + indices[0] * d,
             y + indices[1] * d,
             y + indices[2] * d,
             y + indices[3] * d,
-            d,
+            calc_dim,
             dis[0],
             dis[1],
             dis[2],
@@ -403,8 +406,9 @@ void fvec_inner_products_ny_if(
         size_t d,
         const size_t ny,
         Pred pred,
-        Apply apply) {
-    internal_fvec_inner_products_ny_if(x, y, d, ny, pred, NoRemapping(), apply);
+        Apply apply,
+        size_t truncated_dim = -1) {
+    internal_fvec_inner_products_ny_if(x, y, d, ny, pred, NoRemapping(), apply, truncated_dim);
 }
 
 // compute ny square L2 distance between x vectors x and a set of contiguous y vectors
@@ -425,8 +429,9 @@ void fvec_L2sqr_ny_if(
         size_t d,
         const size_t ny,
         Pred pred,
-        Apply apply) {    
-    internal_fvec_L2sqr_ny_if(x, y, d, ny, pred, NoRemapping(), apply);
+        Apply apply,
+        size_t truncated_dim = -1) {    
+    internal_fvec_L2sqr_ny_if(x, y, d, ny, pred, NoRemapping(), apply, truncated_dim);
 }
 
 // compute ny inner product between x vectors x and a set of contiguous y vectors

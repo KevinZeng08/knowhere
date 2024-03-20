@@ -52,6 +52,7 @@ struct DistanceComputer;
 struct SearchParameters {
     /// if non-null, only these IDs will be considered during search.
     IDSelector* sel = nullptr;
+    int dim = -1; // truncated dimension of query vector
 
     /// make sure we can dynamic_cast this
     virtual ~SearchParameters() {}
@@ -137,6 +138,33 @@ struct Index {
             float* distances,
             idx_t* labels,
             const SearchParameters* params = nullptr) const = 0;
+
+    /** refine n vectors of dimension d from previous search results, only used by truncated search.
+     *
+     * return at most k vectors. If there are not enough results for a
+     * query, the result array is padded with -1s.
+     *
+     * @param n           number of vectors
+     * @param x           input vectors to search, size n * d
+     * @param k           number of vectors before refine
+     * @param distances   input pairwise distances before refine, size n*k
+     * @param labels      input labels of the NNs before refine, size n*k
+     * @param real_k      number of extracted vectors
+     * @param new_distances   output pairwise distances, size n*real_k
+     * @param new_labels      output labels of the NNs, size n*real_k
+     */
+    virtual void refine(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const float* distances,
+        const idx_t* labels,
+        idx_t real_k,
+        float* new_distances,
+        idx_t* new_labels
+        ) const {
+                throw std::runtime_error("refine not implemented for this type of index");
+        }
 
     /** query n vectors of dimension d to the index.
      *

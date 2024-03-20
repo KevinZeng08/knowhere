@@ -71,12 +71,14 @@ struct Level1Quantizer {
 struct SearchParametersIVF : SearchParameters {
     size_t nprobe = 1;    ///< number of probes at query time
     size_t max_codes = 0; ///< max nb of codes to visit to do a query
-    ///< indicate whether we should early teriminate before topk results full when search reaches max_codes
-    ///< to minimize code change, when users only use nprobe to search, this config does not take affect since we will first retrieve the nearest nprobe buckets
-    ///< it is a bit heavy to further retrieve more buckets
-    ///< therefore to make sure we get topk results, use nprobe=nlist and use max_codes to narrow down the search range
+    ///< indicate whether we should early teriminate before topk results full
+    ///< when search reaches max_codes to minimize code change, when users only
+    ///< use nprobe to search, this config does not take affect since we will
+    ///< first retrieve the nearest nprobe buckets it is a bit heavy to further
+    ///< retrieve more buckets therefore to make sure we get topk results, use
+    ///< nprobe=nlist and use max_codes to narrow down the search range
     bool ensure_topk_full = false;
-    
+
     SearchParameters* quantizer_params = nullptr;
 
     virtual ~SearchParametersIVF() {}
@@ -306,6 +308,16 @@ struct IndexIVF : Index, IndexIVFInterface {
             idx_t* labels,
             const SearchParameters* params = nullptr) const override;
 
+    void refine(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            const float* distances,
+            const idx_t* labels,
+            idx_t real_k,
+            float* new_distances,
+            idx_t* new_labels) const override;
+
     void range_search(
             idx_t n,
             const float* x,
@@ -432,7 +444,9 @@ struct IndexIVF : Index, IndexIVFInterface {
      * @param new_maintain_direct_map    if true, create a direct map,
      *                                   else clear it
      */
-    void make_direct_map(bool new_maintain_direct_map = true, DirectMap::Type type = DirectMap::Type::Array);
+    void make_direct_map(
+            bool new_maintain_direct_map = true,
+            DirectMap::Type type = DirectMap::Type::Array);
 
     void set_direct_map_type(DirectMap::Type type);
 
@@ -490,7 +504,8 @@ struct InvertedListScanner {
      * @param distances  heap distances (size k)
      * @param labels     heap labels (size k)
      * @param k          heap size
-     * @param scan_cnt   valid number of codes be scanned
+     * @param scan_cnt   valid number of codes be scanne
+     * @param truncated_dim dimension for distance calculation in truncated search
      * @return number of heap updates performed
      */
     virtual size_t scan_codes(
@@ -501,7 +516,8 @@ struct InvertedListScanner {
             float* distances,
             idx_t* labels,
             size_t k,
-            size_t& scan_cnt) const;
+            size_t& scan_cnt,
+            size_t truncated_dim = -1) const;
 
     /** scan a set of codes, compute distances to current query and
      * push all to heap. Default implemetation

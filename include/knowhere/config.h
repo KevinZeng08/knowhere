@@ -574,6 +574,8 @@ class BaseConfig : public Config {
     CFG_STRING span_id;
     CFG_INT trace_flags;
     CFG_MATERIALIZED_VIEW_SEARCH_INFO_TYPE materialized_view_search_info;
+    CFG_INT dim;
+    CFG_INT refine_k;
     KNOHWERE_DECLARE_CONFIG(BaseConfig) {
         KNOWHERE_CONFIG_DECLARE_FIELD(metric_type)
             .set_default("L2")
@@ -647,6 +649,16 @@ class BaseConfig : public Config {
             .allow_empty_without_default()
             .for_search()
             .for_range_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(dim)
+            .set_default(-1)
+            .description("truncated dimension of vectors for search")
+            .allow_empty_without_default()
+            .for_search();
+        KNOWHERE_CONFIG_DECLARE_FIELD(refine_k)
+            .description("refine topk used for search and refine")
+            .allow_empty_without_default()
+            .set_range(1, std::numeric_limits<CFG_INT::value_type>::max())
+            .for_search();
     }
 };
 }  // namespace knowhere

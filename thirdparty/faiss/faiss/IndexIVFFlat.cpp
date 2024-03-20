@@ -287,10 +287,11 @@ struct IVFFlatScanner : InvertedListScanner {
             float* simi,
             idx_t* idxi,
             size_t k,
-            size_t& scan_cnt) const override {
+            size_t& scan_cnt,
+            size_t truncated_dim = -1) const override {
         const float* list_vecs = (const float*)codes;
         size_t nup = 0;
-
+        size_t dim = (truncated_dim == -1) ? d : truncated_dim;
         // the lambda that filters acceptable elements.
         auto filter = 
             [&](const size_t j) { return (!use_sel || sel->is_member(ids[j])); };
@@ -307,13 +308,14 @@ struct IVFFlatScanner : InvertedListScanner {
                 }
             };
 
+    // TODO pass truncated dim
         if constexpr (metric == METRIC_INNER_PRODUCT) {
             fvec_inner_products_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                xi, list_vecs, d, list_size, filter, apply, truncated_dim);
         }
         else {
             fvec_L2sqr_ny_if(
-                xi, list_vecs, d, list_size, filter, apply);
+                xi, list_vecs, d, list_size, filter, apply, truncated_dim);
         }
 
         return nup;
@@ -433,7 +435,8 @@ struct IVFFlatBitsetViewScanner : InvertedListScanner {
             float* __restrict simi,
             idx_t* __restrict idxi,
             size_t k,
-            size_t& scan_cnt) const override {
+            size_t& scan_cnt,
+            size_t truncated_dim = -1) const override {
         const float* list_vecs = (const float*)codes;
         size_t nup = 0;
 

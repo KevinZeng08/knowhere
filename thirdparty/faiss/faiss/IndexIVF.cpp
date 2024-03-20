@@ -19,6 +19,9 @@
 #include <limits>
 #include <memory>
 
+#include "faiss/MetricType.h"
+#include "faiss/utils/Heap.h"
+#include "faiss/utils/distances.h"
 #include <faiss/utils/hamming.h>
 #include <faiss/utils/utils.h>
 
@@ -250,7 +253,10 @@ void IndexIVF::add_core(
             if (list_no >= 0 && list_no % nt == rank) {
                 idx_t id = xids ? xids[i] : ntotal + i;
                 size_t ofs = invlists->add_entry(
-                        list_no, id, flat_codes.get() + i * code_size, (x_norms == nullptr) ? nullptr : x_norms + i);
+                        list_no,
+                        id,
+                        flat_codes.get() + i * code_size,
+                        (x_norms == nullptr) ? nullptr : x_norms + i);
 
                 dm_adder.add(i, list_no, ofs);
 
@@ -414,6 +420,9 @@ void IndexIVF::search_preassigned(
     nprobe = std::min((idx_t)nlist, nprobe);
     FAISS_THROW_IF_NOT(nprobe > 0);
 
+    size_t truncated_dim = params ? (params->dim != -1 ? params->dim : d) : d;
+    FAISS_THROW_IF_NOT(truncated_dim <= d);
+
     const idx_t unlimited_list_size = std::numeric_limits<idx_t>::max();
     idx_t max_codes = params ? params->max_codes : this->max_codes;
     bool ensure_topk_full = params ? params->ensure_topk_full : false;
@@ -546,22 +555,28 @@ void IndexIVF::search_preassigned(
 
                     return list_size;
                 } else {
-                    size_t scan_cnt = 0;  // only record valid cnt
+                    size_t scan_cnt = 0; // only record valid cnt
 
                     size_t segment_num = invlists->get_segment_num(key);
-                    for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
-                        size_t segment_size = invlists->get_segment_size(key, segment_idx);
-                        size_t segment_offset = invlists->get_segment_offset(key, segment_idx);
-                        InvertedLists::ScopedCodes scodes(invlists, key, segment_offset);
+                    for (size_t segment_idx = 0; segment_idx < segment_num;
+                         segment_idx++) {
+                        size_t segment_size =
+                                invlists->get_segment_size(key, segment_idx);
+                        size_t segment_offset =
+                                invlists->get_segment_offset(key, segment_idx);
+                        InvertedLists::ScopedCodes scodes(
+                                invlists, key, segment_offset);
                         std::unique_ptr<InvertedLists::ScopedIds> sids;
                         const idx_t* ids = nullptr;
 
-                        auto scode_norms = std::make_unique<InvertedLists::ScopedCodeNorms>(invlists, key, segment_offset);
+                        auto scode_norms = std::make_unique<
+                                InvertedLists::ScopedCodeNorms>(
+                                invlists, key, segment_offset);
                         const float* code_norms = scode_norms->get();
 
                         if (!store_pairs) {
                             sids = std::make_unique<InvertedLists::ScopedIds>(
-                                invlists, key, segment_offset);
+                                    invlists, key, segment_offset);
                             ids = sids->get();
                         }
                         nheap += scanner->scan_codes(
@@ -572,8 +587,9 @@ void IndexIVF::search_preassigned(
                                 simi,
                                 idxi,
                                 k,
-                                scan_cnt);
-                    }                
+                                scan_cnt,
+                                truncated_dim);
+                    }
 
                     return scan_cnt;
                 }
@@ -615,8 +631,10 @@ void IndexIVF::search_preassigned(
                             idxi,
                             max_codes - nscan);
 
-                    // if ensure_topk_full enabled, also make sure nscan >= k, then stop search further
-                    if (nscan >= max_codes && (!ensure_topk_full || nscan >= k)) {
+                    // if ensure_topk_full enabled, also make sure nscan >= k,
+                    // then stop search further
+                    if (nscan >= max_codes &&
+                        (!ensure_topk_full || nscan >= k)) {
                         break;
                     }
                 }
@@ -728,6 +746,57 @@ void IndexIVF::search_preassigned(
     }
 }
 
+void IndexIVF::refine(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const float* distances,
+        const idx_t* labels,
+        idx_t real_k,
+        float* new_distances,
+        idx_t* new_labels) const {
+    FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT(real_k > 0);
+    FAISS_THROW_IF_NOT(real_k <= k);
+
+    auto data = std::make_unique<float[]>(k * d);
+    for (int i = 0; i < n; i++) {
+        const idx_t* ids = labels + i * k;
+        const float* dis = distances + i * k;
+        idx_t* out_ids = new_labels + i * real_k;
+        float* out_dis = new_distances + i * real_k;
+
+        // get vectors by labels
+        for (int64_t j = 0; j < k; j++) {
+            idx_t id = ids[j];
+            assert(id >= 0 && id < ntotal);
+            reconstruct(id, data.get() + j * d);
+        }
+        // compute distance with query
+        if (metric_type == METRIC_INNER_PRODUCT) {
+            float_minheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
+            if (is_cosine) {
+                // TODO how to get norm in IVFFLAT
+                knn_cosine(x, data.get(), nullptr, d, n, k, &res);
+            } else {
+                knn_inner_product(x, data.get(), d, n, k, &res);
+            }
+            for (int64_t j = 0; j < real_k; j++) {
+                out_ids[j] = ids[out_ids[j]];
+            } 
+        } else if (metric_type == METRIC_L2) {
+            float_maxheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
+            knn_L2sqr(x, data.get(), d, n, k, &res);
+            // output ids range [0,k-1], get real id from labels
+            for (int64_t j = 0; j < real_k; j++) {
+                out_ids[j] = ids[out_ids[j]];
+            }
+        } else if (metric_type == METRIC_Jaccard) {
+        } else {
+        }
+    }
+}
+
 void IndexIVF::range_search(
         idx_t nx,
         const float* x,
@@ -778,8 +847,7 @@ void IndexIVF::range_search_preassigned(
         bool store_pairs,
         const IVFSearchParameters* params,
         IndexIVFStats* stats) const {
-
-    // Knowhere-specific code: 
+    // Knowhere-specific code:
     //   only "parallel_mode == 0" branch is supported.
 
     idx_t nprobe = params ? params->nprobe : this->nprobe;
@@ -850,13 +918,19 @@ void IndexIVF::range_search_preassigned(
                     ndis += list_size;
                 } else {
                     size_t segment_num = invlists->get_segment_num(key);
-                    for (size_t segment_idx = 0; segment_idx < segment_num; segment_idx++) {
-                        size_t segment_size = invlists->get_segment_size(key, segment_idx);
-                        size_t segment_offset = invlists->get_segment_offset(key, segment_idx);
+                    for (size_t segment_idx = 0; segment_idx < segment_num;
+                         segment_idx++) {
+                        size_t segment_size =
+                                invlists->get_segment_size(key, segment_idx);
+                        size_t segment_offset =
+                                invlists->get_segment_offset(key, segment_idx);
 
-                        InvertedLists::ScopedCodes scodes(invlists, key, segment_offset);
-                        InvertedLists::ScopedIds ids(invlists, key, segment_offset);
-                        InvertedLists::ScopedCodeNorms scode_norms(invlists, key, segment_offset);
+                        InvertedLists::ScopedCodes scodes(
+                                invlists, key, segment_offset);
+                        InvertedLists::ScopedIds ids(
+                                invlists, key, segment_offset);
+                        InvertedLists::ScopedCodeNorms scode_norms(
+                                invlists, key, segment_offset);
 
                         scanner->set_list(key, coarse_dis[i * nprobe + ik]);
                         nlistv++;
@@ -888,18 +962,19 @@ void IndexIVF::range_search_preassigned(
                 // ====================================================
                 // The following piece of the code is Knowhere-specific.
                 //
-                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c: 
+                // cbe86cf716dc1969fc716c29ccf8ea63e82a2b4c:
                 //   Adopt new strategy for faiss IVF range search
 
                 size_t prev_nres = qres.nres;
 
                 for (size_t ik = 0; ik < nprobe; ik++) {
                     scan_list_func(i, ik, qres);
-                    if (qres.nres == prev_nres) break;
+                    if (qres.nres == prev_nres)
+                        break;
                     prev_nres = qres.nres;
                 }
 
-                // The end of Knowhere-specific code. 
+                // The end of Knowhere-specific code.
                 // ====================================================
             }
         } else {
@@ -1310,7 +1385,8 @@ size_t InvertedListScanner::scan_codes(
         float* simi,
         idx_t* idxi,
         size_t k,
-        size_t& scan_cnt) const {
+        size_t& scan_cnt,
+        size_t truncated_dim) const {
     size_t nup = 0;
 
     if (!keep_max) {

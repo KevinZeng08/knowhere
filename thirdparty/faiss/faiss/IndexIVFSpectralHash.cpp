@@ -259,7 +259,8 @@ struct IVFScanner : InvertedListScanner {
             float* simi,
             idx_t* idxi,
             size_t k,
-            size_t& scan_cnt) const override {
+            size_t& scan_cnt,
+            size_t truncated_dim = -1) const override {
         size_t nup = 0;
         for (size_t j = 0; j < list_size; j++) {
             if (!sel || sel->is_member(ids[j])) {

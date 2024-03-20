@@ -592,12 +592,35 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
 
     const IvfConfig& ivf_cfg = static_cast<const IvfConfig&>(cfg);
     bool is_cosine = IsMetricType(ivf_cfg.metric_type.value(), knowhere::metric::COSINE);
+    bool has_raw_data = HasRawData(ivf_cfg.metric_type.value());
 
-    auto k = ivf_cfg.k.value();
+    auto real_k = ivf_cfg.k.value();
+    auto k = real_k;
+    if (ivf_cfg.refine_k.has_value()) {
+        k = ivf_cfg.refine_k.value();
+    }
     auto nprobe = ivf_cfg.nprobe.value();
+    auto truncated_dim = ivf_cfg.dim.value();
 
-    int64_t* ids(new (std::nothrow) int64_t[rows * k]);
-    float* distances(new (std::nothrow) float[rows * k]);
+    if (truncated_dim > 0 && truncated_dim < dim && !has_raw_data) {
+        return expected<DataSetPtr>::Err(Status::invalid_args,
+                                         "unsupport: search dimension is truncated and index has no raw data");
+    }
+    // if refine topk is larger than topk and we don't have raw data, return error
+    if (k > real_k && !has_raw_data) {
+        return expected<DataSetPtr>::Err(Status::invalid_args, "unsupport: refine_k is set and index has no raw data");
+    }
+    // truncated dimension and has raw data, refine the result
+    std::unique_ptr<int64_t[]> r_ids;
+    std::unique_ptr<float[]> r_distances;
+    bool need_refine = has_raw_data && truncated_dim < dim;
+    if (need_refine) {
+        r_ids = std::make_unique<int64_t[]>(rows * k);
+        r_distances = std::make_unique<float[]>(rows * k);
+    }
+
+    int64_t* ids(new (std::nothrow) int64_t[rows * real_k]);
+    float* distances(new (std::nothrow) float[rows * real_k]);
     int32_t* i_distances = reinterpret_cast<int32_t*>(distances);
     try {
         std::vector<folly::Future<folly::Unit>> futs;
@@ -605,7 +628,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
         for (int i = 0; i < rows; ++i) {
             futs.emplace_back(search_pool_->push([&, index = i] {
                 ThreadPool::ScopedOmpSetter setter(1);
-                auto offset = k * index;
+                auto offset = real_k * index;
                 std::unique_ptr<float[]> copied_query = nullptr;
 
                 BitsetViewIDSelector bw_idselector(bitset);
@@ -645,7 +668,16 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
                         ivf_search_params.max_codes = 0;
                     }
 
-                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
+                    if (need_refine) {
+                        ivf_search_params.dim = truncated_dim;
+                        auto r_offset = k * index;
+                        index_->search(1, cur_query, k, r_distances.get() + r_offset, r_ids.get() + r_offset,
+                                       &ivf_search_params);
+                        index_->refine(1, cur_query, k, r_distances.get() + r_offset, r_ids.get() + r_offset, real_k,
+                                       distances + offset, ids + offset);
+                    } else {
+                        index_->search(1, cur_query, real_k, distances + offset, ids + offset, &ivf_search_params);
+                    }
                 } else if constexpr (std::is_same<IndexType, faiss::IndexScaNN>::value) {
                     auto cur_query = (const float*)data + index * dim;
                     const ScannConfig& scann_cfg = static_cast<const ScannConfig&>(cfg);
@@ -675,8 +707,18 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
                     ivf_search_params.nprobe = nprobe;
                     ivf_search_params.max_codes = 0;
                     ivf_search_params.sel = id_selector;
-
-                    index_->search(1, cur_query, k, distances + offset, ids + offset, &ivf_search_params);
+                    if (need_refine) {
+                        ivf_search_params.dim = truncated_dim;
+                        auto r_offset = k * index;
+                        index_->search(1, cur_query, k, r_distances.get() + r_offset, r_ids.get() + r_offset,
+                                       &ivf_search_params);
+                        // std::memcpy(distances + offset, r_distances.get() + r_offset, sizeof(float) * k);
+                        // std::memcpy(ids + offset, r_ids.get() + r_offset, sizeof(int64_t) * k);
+                        index_->refine(1, cur_query, k, r_distances.get() + r_offset, r_ids.get() + r_offset, real_k,
+                                       distances + offset, ids + offset);
+                    } else {
+                        index_->search(1, cur_query, real_k, distances + offset, ids + offset, &ivf_search_params);
+                    }
                 }
             }));
         }
@@ -688,8 +730,7 @@ IvfIndexNode<DataType, IndexType>::Search(const DataSet& dataset, const Config& 
         LOG_KNOWHERE_WARNING_ << "faiss inner error: " << e.what();
         return expected<DataSetPtr>::Err(Status::faiss_inner_error, e.what());
     }
-
-    auto res = GenResultDataSet(rows, k, ids, distances);
+    auto res = GenResultDataSet(rows, real_k, ids, distances);
     return res;
 }
 

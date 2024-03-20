@@ -308,7 +308,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             }
             // dist_t dist = fstdistfunc_(getDataByInternalId(id1), getDataByInternalId(id2), dist_func_param_);
             if (metric_type_ == Metric::COSINE) {
-                dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]); // TODO sliced dims, norm change
+                dist /= (data_norm_l2_[id1] * data_norm_l2_[id2]); // TODO truncated dims, norm change
             }
             return dist;
         }
@@ -1366,7 +1366,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     }
 
     std::vector<std::pair<dist_t, labeltype>>
-    truncatedVectorRefine(const void* query_data, size_t k, const std::vector<std::pair<dist_t, labeltype>>& candidates) const {
+    refine(const void* query_data, size_t k, const std::vector<std::pair<dist_t, labeltype>>& candidates) const {
         knowhere::ResultMaxHeap<dist_t, labeltype> max_heap(k);
         for (const auto& candidate : candidates) {
             dist_t dist = calcDistance(query_data, candidate.second);
@@ -1388,7 +1388,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             return {};
         
         size_t sliced_dim = param ? (param->dim_ != -1 ? param->dim_ : *(size_t*)dist_func_param_ ): *(size_t*)dist_func_param_;
-        size_t real_k = param ? (param->k_ != -1 ? param->k_ : k) : k;
+        // size_t real_k = param ? (param->k_ != -1 ? param->k_ : k) : k;
 
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
@@ -1454,9 +1454,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         }
         
         // refine for bigger K
-        if (k > real_k) {
-            result = truncatedVectorRefine(query_data, real_k, result);
-        }
+        // if (k > real_k) {
+        //     result = truncatedVectorRefine(query_data, real_k, result);
+        // }
 
         return result;
     };
