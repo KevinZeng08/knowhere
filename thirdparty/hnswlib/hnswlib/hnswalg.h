@@ -1387,8 +1387,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (cur_element_count == 0 || bitset.count() == cur_element_count)
             return {};
         
-        size_t sliced_dim = param ? (param->dim_ != -1 ? param->dim_ : *(size_t*)dist_func_param_ ): *(size_t*)dist_func_param_;
-        // size_t real_k = param ? (param->k_ != -1 ? param->k_ : k) : k;
+        size_t truncated_dim = param ? (param->dim_ != -1 ? param->dim_ : *(size_t*)dist_func_param_ ): *(size_t*)dist_func_param_;
 
         // do normalize for COSINE metric type
         std::unique_ptr<float[]> query_data_norm;
@@ -1427,10 +1426,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         size_t ef = param ? param->ef_ : this->ef_;
         auto visited = visited_list_pool_->getFreeVisitedList();
         if (!bitset.empty()) {
-            retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, sliced_dim);
+            retset = searchBaseLayerST<true, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, truncated_dim);
         } else {
             retset =
-                searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, sliced_dim);
+                searchBaseLayerST<false, true>(currObj, query_data, std::max(ef, k), visited, bitset, feder_result, nullptr, 0.0, truncated_dim);
         }
         std::vector<std::pair<dist_t, labeltype>> result;
         size_t len = std::min(k, retset.size());
@@ -1452,11 +1451,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (len > 0) {
             lru_cache.put(vec_hash, result[0].second);
         }
-        
-        // refine for bigger K
-        // if (k > real_k) {
-        //     result = truncatedVectorRefine(query_data, real_k, result);
-        // }
 
         return result;
     };

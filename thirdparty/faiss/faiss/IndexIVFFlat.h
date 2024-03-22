@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <optional>
 #include <unordered_map>
+#include "faiss/MetricType.h"
 
 #include <faiss/IndexIVF.h>
 
@@ -28,13 +29,17 @@ struct IVFFlatIteratorWorkspace {
     bool initial_search_done = false;
     std::unique_ptr<float[]> distances = nullptr; // backup distances (heap)
     std::unique_ptr<idx_t[]> labels = nullptr;    // backup ids (heap)
-    size_t backup_count = 0;            // scan a new coarse-list when less than backup_count_threshold
-    size_t max_backup_count = 0;        
-    size_t backup_count_threshold = 0;  // count * nprobe / nlist
+    size_t backup_count =
+            0; // scan a new coarse-list when less than backup_count_threshold
+    size_t max_backup_count = 0;
+    size_t backup_count_threshold = 0; // count * nprobe / nlist
     size_t next_visit_coarse_list_idx = 0;
-    std::unique_ptr<float[]> coarse_dis = nullptr;   // backup coarse centroids distances (heap)
-    std::unique_ptr<idx_t[]> coarse_idx = nullptr;   // backup coarse centroids ids (heap)
-    std::unique_ptr<size_t[]> coarse_list_sizes = nullptr;  // snapshot of the list_size
+    std::unique_ptr<float[]> coarse_dis =
+            nullptr; // backup coarse centroids distances (heap)
+    std::unique_ptr<idx_t[]> coarse_idx =
+            nullptr; // backup coarse centroids ids (heap)
+    std::unique_ptr<size_t[]> coarse_list_sizes =
+            nullptr; // snapshot of the list_size
     size_t max_coarse_list_size = 0;
 };
 
@@ -80,7 +85,22 @@ struct IndexIVFFlat : IndexIVF {
     void reconstruct_from_offset(int64_t list_no, int64_t offset, float* recons)
             const override;
 
+    void reconstruct_norm_from_offset(
+            int64_t list_no,
+            int64_t offset,
+            float& norm) const override;
+
     void sa_decode(idx_t n, const uint8_t* bytes, float* x) const override;
+
+    void refine(
+            idx_t n,
+            const float* x,
+            idx_t k,
+            const float* distances,
+            const idx_t* labels,
+            idx_t real_k,
+            float* new_distances,
+            idx_t* new_labels) const override;
 
     IndexIVFFlat();
 

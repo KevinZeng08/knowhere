@@ -139,7 +139,8 @@ struct Index {
             idx_t* labels,
             const SearchParameters* params = nullptr) const = 0;
 
-    /** refine n vectors of dimension d from previous search results, only used by truncated search.
+    /** refine n vectors of dimension d from previous search results, only used
+     * by truncated search.
      *
      * return at most k vectors. If there are not enough results for a
      * query, the result array is padded with -1s.
@@ -154,17 +155,17 @@ struct Index {
      * @param new_labels      output labels of the NNs, size n*real_k
      */
     virtual void refine(
-        idx_t n,
-        const float* x,
-        idx_t k,
-        const float* distances,
-        const idx_t* labels,
-        idx_t real_k,
-        float* new_distances,
-        idx_t* new_labels
-        ) const {
-                throw std::runtime_error("refine not implemented for this type of index");
-        }
+            idx_t n,
+            const float* x,
+            idx_t k,
+            const float* distances,
+            const idx_t* labels,
+            idx_t real_k,
+            float* new_distances,
+            idx_t* new_labels) const {
+        throw std::runtime_error(
+                "refine not implemented for this type of index");
+    }
 
     /** query n vectors of dimension d to the index.
      *
@@ -229,6 +230,14 @@ struct Index {
      * @param recons      reconstucted vector (size ni * d)
      */
     virtual void reconstruct_n(idx_t i0, idx_t ni, float* recons) const;
+
+    /** Reconstruct a stored vector's norm
+     *
+     * this function may not be defined for some indexes
+     * @param key         id of the vector to reconstruct
+     * @param norm        reconstructed norm
+     */
+    virtual void reconstruct_norm(idx_t key, float& norm) const;
 
     /** Similar to search, but also reconstructs the stored vectors (or an
      * approximation in the case of lossy coding) for the search results.

@@ -19,11 +19,11 @@
 #include <limits>
 #include <memory>
 
+#include <faiss/utils/hamming.h>
+#include <faiss/utils/utils.h>
 #include "faiss/MetricType.h"
 #include "faiss/utils/Heap.h"
 #include "faiss/utils/distances.h"
-#include <faiss/utils/hamming.h>
-#include <faiss/utils/utils.h>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/impl/AuxIndexStructures.h>
@@ -746,57 +746,6 @@ void IndexIVF::search_preassigned(
     }
 }
 
-void IndexIVF::refine(
-        idx_t n,
-        const float* x,
-        idx_t k,
-        const float* distances,
-        const idx_t* labels,
-        idx_t real_k,
-        float* new_distances,
-        idx_t* new_labels) const {
-    FAISS_THROW_IF_NOT(k > 0);
-    FAISS_THROW_IF_NOT(real_k > 0);
-    FAISS_THROW_IF_NOT(real_k <= k);
-
-    auto data = std::make_unique<float[]>(k * d);
-    for (int i = 0; i < n; i++) {
-        const idx_t* ids = labels + i * k;
-        const float* dis = distances + i * k;
-        idx_t* out_ids = new_labels + i * real_k;
-        float* out_dis = new_distances + i * real_k;
-
-        // get vectors by labels
-        for (int64_t j = 0; j < k; j++) {
-            idx_t id = ids[j];
-            assert(id >= 0 && id < ntotal);
-            reconstruct(id, data.get() + j * d);
-        }
-        // compute distance with query
-        if (metric_type == METRIC_INNER_PRODUCT) {
-            float_minheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
-            if (is_cosine) {
-                // TODO how to get norm in IVFFLAT
-                knn_cosine(x, data.get(), nullptr, d, n, k, &res);
-            } else {
-                knn_inner_product(x, data.get(), d, n, k, &res);
-            }
-            for (int64_t j = 0; j < real_k; j++) {
-                out_ids[j] = ids[out_ids[j]];
-            } 
-        } else if (metric_type == METRIC_L2) {
-            float_maxheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
-            knn_L2sqr(x, data.get(), d, n, k, &res);
-            // output ids range [0,k-1], get real id from labels
-            for (int64_t j = 0; j < real_k; j++) {
-                out_ids[j] = ids[out_ids[j]];
-            }
-        } else if (metric_type == METRIC_Jaccard) {
-        } else {
-        }
-    }
-}
-
 void IndexIVF::range_search(
         idx_t nx,
         const float* x,
@@ -1019,6 +968,11 @@ void IndexIVF::reconstruct(idx_t key, float* recons) const {
     reconstruct_from_offset(lo_listno(lo), lo_offset(lo), recons);
 }
 
+void IndexIVF::reconstruct_norm(idx_t key, float& norm) const {
+    idx_t lo = direct_map.get(key);
+    reconstruct_norm_from_offset(lo_listno(lo), lo_offset(lo), norm);
+}
+
 void IndexIVF::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {
     FAISS_THROW_IF_NOT(ni == 0 || (i0 >= 0 && i0 + ni <= ntotal));
 
@@ -1193,6 +1147,10 @@ void IndexIVF::reconstruct_from_offset(
         int64_t /*offset*/,
         float* /*recons*/) const {
     FAISS_THROW_MSG("reconstruct_from_offset not implemented");
+}
+
+void IndexIVF::reconstruct_norm_from_offset(int64_t, int64_t, float&) const {
+    FAISS_THROW_MSG("reconstruct_norm_from_offset not implemented");
 }
 
 void IndexIVF::reset() {

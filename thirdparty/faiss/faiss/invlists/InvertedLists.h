@@ -148,6 +148,9 @@ struct InvertedLists {
     /// (should be deallocated with release_codes)
     virtual const uint8_t* get_single_code(size_t list_no, size_t offset) const;
 
+    /// @return a single norm in an inverted list
+    virtual const float get_single_code_norm(size_t list_no, size_t offset) const;
+
     /// prepare the following lists (default does nothing)
     /// a list can be -1 hence the signed long
     virtual void prefetch_lists(const idx_t* list_nos, int nlist) const;
@@ -415,6 +418,7 @@ struct ConcurrentArrayInvertedLists : InvertedLists {
 
     idx_t get_single_id(size_t list_no, size_t offset) const override;
     const uint8_t* get_single_code(size_t list_no, size_t offset) const override;
+    const float get_single_code_norm(size_t list_no, size_t offset) const override;
 
     size_t add_entries(
             size_t list_no,

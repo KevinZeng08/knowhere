@@ -80,6 +80,10 @@ void Index::reconstruct_n(idx_t i0, idx_t ni, float* recons) const {
     }
 }
 
+void Index::reconstruct_norm(idx_t key, float& norm) const {
+    FAISS_THROW_MSG("reconstruct_norm not implemented for this type of index");
+}
+
 void Index::search_and_reconstruct(
         idx_t n,
         const float* x,

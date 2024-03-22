@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdint>
 #include <cstdio>
+#include <memory>
 
 #include "knowhere/utils.h"
 #include "knowhere/bitsetview_idselector.h"
@@ -166,6 +168,62 @@ void IndexIVFFlat::sa_decode(idx_t n, const uint8_t* bytes, float* x) const {
         const uint8_t* code = bytes + i * (code_size + coarse_size);
         float* xi = x + i * d;
         memcpy(xi, code + coarse_size, code_size);
+    }
+}
+
+void IndexIVFFlat::refine(
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const float* distances,
+        const idx_t* labels,
+        idx_t real_k,
+        float* new_distances,
+        idx_t* new_labels) const {
+    FAISS_THROW_IF_NOT(k > 0);
+    FAISS_THROW_IF_NOT(real_k > 0);
+    FAISS_THROW_IF_NOT(real_k <= k);
+
+    auto data = std::make_unique<float[]>(k * d);
+    std::unique_ptr<float[]> norms;
+    if (is_cosine) {
+        norms = std::make_unique<float[]>(k);
+    }
+    for (int i = 0; i < n; i++) {
+        const idx_t* ids = labels + i * k;
+        const float* dis = distances + i * k;
+        idx_t* out_ids = new_labels + i * real_k;
+        float* out_dis = new_distances + i * real_k;
+
+        // get vectors by labels
+        for (int64_t j = 0; j < k; j++) {
+            idx_t id = ids[j];
+            assert(id >= 0 && id < ntotal);
+            reconstruct(id, data.get() + j * d);
+            if (is_cosine) {
+                reconstruct_norm(id, norms[j]);
+            }
+        }
+        // compute distance with query
+        if (metric_type == METRIC_INNER_PRODUCT) {
+            float_minheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
+            if (is_cosine) {
+                // TODO get norm from IVFFLAT to avoid redundant norm computation
+                knn_cosine(x, data.get(), norms.get(), d, n, k, &res);
+            } else {
+                knn_inner_product(x, data.get(), d, n, k, &res);
+            }
+            for (int64_t j = 0; j < real_k; j++) {
+                out_ids[j] = ids[out_ids[j]];
+            } 
+        } else {
+            float_maxheap_array_t res = {size_t(n), size_t(real_k), out_ids, out_dis};
+            knn_L2sqr(x, data.get(), d, n, k, &res);
+            // output ids range [0,k-1], get real id from labels
+            for (int64_t j = 0; j < real_k; j++) {
+                out_ids[j] = ids[out_ids[j]];
+            }
+        } 
     }
 }
 
@@ -597,6 +655,13 @@ void IndexIVFFlat::reconstruct_from_offset(
         int64_t offset,
         float* recons) const {
     memcpy(recons, invlists->get_single_code(list_no, offset), code_size);
+}
+
+void IndexIVFFlat::reconstruct_norm_from_offset(
+        int64_t list_no,
+        int64_t offset,
+        float& norm) const {
+    norm = invlists->get_single_code_norm(list_no, offset);
 }
 
 std::unique_ptr<IVFFlatIteratorWorkspace> IndexIVFFlat::getIteratorWorkspace(

@@ -308,16 +308,6 @@ struct IndexIVF : Index, IndexIVFInterface {
             idx_t* labels,
             const SearchParameters* params = nullptr) const override;
 
-    void refine(
-            idx_t n,
-            const float* x,
-            idx_t k,
-            const float* distances,
-            const idx_t* labels,
-            idx_t real_k,
-            float* new_distances,
-            idx_t* new_labels) const override;
-
     void range_search(
             idx_t n,
             const float* x,
@@ -336,6 +326,11 @@ struct IndexIVF : Index, IndexIVFInterface {
     /** reconstruct a vector. Works only if maintain_direct_map is set to 1 or 2
      */
     void reconstruct(idx_t key, float* recons) const override;
+
+    /** reconstruct a norm given vector id. Works only if maintain_direct_map is
+     * set to 1 or 2
+     */
+    void reconstruct_norm(idx_t key, float& norm) const override;
 
     /** Update a subset of vectors.
      *
@@ -405,6 +400,13 @@ struct IndexIVF : Index, IndexIVFInterface {
             int64_t list_no,
             int64_t offset,
             float* recons) const;
+    /** Reconstruct a vector's norm given the location in terms of (inv list
+     * index + inv list offset) instead of the id.
+     */
+    virtual void reconstruct_norm_from_offset(
+            int64_t list_no,
+            int64_t offset,
+            float& norm) const;
 
     /// Dataset manipulation functions
 
@@ -505,7 +507,8 @@ struct InvertedListScanner {
      * @param labels     heap labels (size k)
      * @param k          heap size
      * @param scan_cnt   valid number of codes be scanne
-     * @param truncated_dim dimension for distance calculation in truncated search
+     * @param truncated_dim dimension for distance calculation in truncated
+     * search
      * @return number of heap updates performed
      */
     virtual size_t scan_codes(
