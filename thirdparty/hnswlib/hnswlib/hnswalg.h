@@ -101,7 +101,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             fstdistfunc_sq_ = space_->get_dist_func_sq();
         }
         dist_func_param_ = s->get_dist_func_param();
+        gamma_ = 1 / smin_;
+
         M_ = M;
+        M_ = M * gamma_; // increase edges of data points
         maxM_ = M_;
         maxM0_ = M_ * 2;
         ef_construction_ = std::max(ef_construction, M_);
@@ -235,6 +238,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     float alpha_ = 0.0f;
 
     mutable knowhere::lru_cache<uint64_t, tableint> lru_cache;
+
+    double gamma_; // factor for 2-hop search
+    double smin_ = 0.1; // minimum selectivity to trigger brute-force search
 
     // Symmetric quantization to encode float value from [-alpha, alpha] to [-127, 127]
     void
