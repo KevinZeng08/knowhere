@@ -50,7 +50,7 @@ test_hnsw_filter() {
         json[knowhere::indexparam::EF] = 120;
         return json;
     };
-
+    // TODO test with SIFT1M
     const auto train_ds = GenDataSet(nb, dim);
     const auto query_ds = GenDataSet(nq, dim);
 
@@ -71,7 +71,7 @@ test_hnsw_filter() {
 
     std::vector<std::function<std::vector<uint8_t>(size_t, size_t)>> gen_bitset_funcs = {
         GenerateBitsetWithFirstTbitsSet};
-    const auto filter_selectivity = {0.1f, 0.5f, 0.9f};
+    const auto filter_selectivity = {0.1f, 0.5f, 0.9f, 0.98f};
 
     for (const float selectivity : filter_selectivity) {
         for (const auto& gen_func : gen_bitset_funcs) {

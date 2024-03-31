@@ -104,7 +104,10 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         gamma_ = 1 / smin_;
 
         M_ = M;
-        M_ = M * gamma_; // increase edges of data points
+        // TODO tuning for ACORN construction
+        M_ = M * gamma_;              // increase edges of data points
+        M_beta_ = std::ceil(M_ / 2);  // TODO tuning for ACORN construction
+
         maxM_ = M_;
         maxM0_ = M_ * 2;
         ef_construction_ = std::max(ef_construction, M_);
@@ -198,6 +201,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     size_t maxM_;
     size_t maxM0_;
     size_t ef_construction_;
+    size_t M_beta_;  // construction and search paramter for 2-hop search
 
     double mult_, revSize_;
     int maxlevel_;
@@ -239,8 +243,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     mutable knowhere::lru_cache<uint64_t, tableint> lru_cache;
 
-    double gamma_; // factor for 2-hop search
-    double smin_ = 0.1; // minimum selectivity to trigger brute-force search
+    double gamma_;     // factor for 2-hop search
+    double smin_ = 1;  // minimum selectivity to trigger brute-force search
 
     // Symmetric quantization to encode float value from [-alpha, alpha] to [-127, 127]
     void
@@ -428,37 +432,32 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             metric_distance_computations += size;
         }
         float kAlpha = bitset.filter_ratio() / 2.0f;
-        for (size_t i = 1; i <= size; ++i) {
-            if (i + 1 <= size) {
+        // ACORN: 读前M_beta个节点，如果节点被过滤，不考虑；(M_beta, maxM0]的节点，读2-hop邻居节点 (连通性扩展)
+        for (size_t i = 1; i <= M_beta_; ++i) {
+            if (i + 1 <= M_beta_) {
                 prefetchData(list[i + 1]);
             }
             tableint v = list[i];
             if (visited[v]) {
-                if (feder_result != nullptr) {
-                    feder_result->visit_info_.AddVisitRecord(0, u, v, -1.0);
-                    feder_result->id_set_.insert(u);
-                    feder_result->id_set_.insert(v);
-                }
                 continue;
             }
             visited[v] = true;
             int status = Neighbor::kValid;
-            if (has_deletions && bitset.test((int64_t)v)) {
-                status = Neighbor::kInvalid;
-
-                accumulative_alpha += kAlpha;
-                if (accumulative_alpha < 1.0f) {
-                    continue;
-                }
-                accumulative_alpha -= 1.0f;
+            // without candidate
+            if (has_deletions && bitset.test(int64_t(v))) {
+                continue;
             }
+            // alpha candidate
+            // if (has_deletions && bitset.test(int64_t(v))) {
+            //     status = Neighbor::kInvalid;
+            //     accumulative_alpha += kAlpha;
+            //     if (accumulative_alpha < 1.0f) {
+            //         continue;
+            //     }
+            //     accumulative_alpha -= 1.0f;
+            // }
+
             dist_t dist = calcDistance(data_point, v);
-            if (feder_result != nullptr) {
-                feder_result->visit_info_.AddVisitRecord(0, u, v, dist);
-                feder_result->id_set_.insert(u);
-                feder_result->id_set_.insert(v);
-            }
-
             Neighbor nn(v, dist, status);
             if (add_search_candidate(nn)) {
 #if defined(USE_PREFETCH)
@@ -466,6 +465,104 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 #endif
             }
         }
+
+        for (size_t i = M_beta_ + 1; i <= size; ++i) {
+            if (i + 1 <= size) {
+                prefetchData(list[i + 1]);
+            }
+            tableint v = list[i];
+            // iterate 2-hop neighbor
+            tableint* list_2hop = (tableint*)get_linklist0(v);
+            int size_2hop = list_2hop[0];
+            for (size_t j = 1; j <= size_2hop; j++) {
+                if (j + 1 < size_2hop) {
+                    prefetchData(list_2hop[j + 1]);
+                }
+                tableint v2 = list_2hop[j];
+                if (visited[v2]) {
+                    continue;
+                }
+                visited[v2] = true;
+                int status = Neighbor::kValid;
+                without candidate
+                if (has_deletions && bitset.test(int64_t(v2))) {
+                    continue;
+                }
+                // alpha candidate
+                // if (has_deletions && bitset.test(int64_t(v2))) {
+                //     status = Neighbor::kInvalid;
+                //     accumulative_alpha += kAlpha;
+                //     if (accumulative_alpha < 1.0f) {
+                //         continue;
+                //     }
+                //     accumulative_alpha -= 1.0f;
+                // }
+                dist_t dist2 = calcDistance(data_point, v2);
+                Neighbor nn(v2, dist2, status);
+                if (add_search_candidate(nn)) {
+#if defined(USE_PREFETCH)
+                    _mm_prefetch(get_linklist0(v2), _MM_HINT_T0);
+#endif
+                }
+            }
+            // check 1-hop neighbor
+            if (visited[v]) {
+                continue;
+            }
+            visited[v] = true;
+            int status = Neighbor::kValid;
+            // without candidate
+            if (has_deletions && bitset.test(int64_t(v))) {
+                continue;
+            }
+            // alpha candidate
+            // if (has_deletions && bitset.test(int64_t(v))) {
+            //     status = Neighbor::kInvalid;
+            //     accumulative_alpha += kAlpha;
+            //     if (accumulative_alpha < 1.0f) {
+            //         continue;
+            //     }
+            //     accumulative_alpha -= 1.0f;
+            // }
+            dist_t dist = calcDistance(data_point, v);
+            Neighbor nn(v, dist, status);
+            if (add_search_candidate(nn)) {
+#if defined(USE_PREFETCH)
+                _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
+#endif
+            }
+        }
+
+        // baseline
+        //         for (size_t i = 1; i <= size; ++i) {
+        //             if (i + 1 <= size) {
+        //                 prefetchData(list[i + 1]);
+        //             }
+        //             tableint v = list[i];
+        //             if (visited[v]) {
+        //                 continue;
+        //             }
+        //             visited[v] = true;
+        //             int status = Neighbor::kValid;
+        //             if (has_deletions && bitset.test((int64_t)v)) {  //
+        //             如果节点被过滤掉，置成Invalid，但依旧放入BFS的队列
+        //                 status = Neighbor::kInvalid;
+
+        //                 accumulative_alpha += kAlpha;
+        //                 if (accumulative_alpha < 1.0f) {
+        //                     continue;
+        //                 }
+        //                 accumulative_alpha -= 1.0f;
+        //             }
+        //             dist_t dist = calcDistance(data_point, v);
+
+        //             Neighbor nn(v, dist, status);
+        //             if (add_search_candidate(nn)) {
+        // #if defined(USE_PREFETCH)
+        //                 _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
+        // #endif
+        //             }
+        //         }
     }
 
     // accumulative_alpha: when searching on graph with filter, we want to keep some filtered nodes in the search path
