@@ -105,9 +105,11 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
         M_ = M;
         // TODO tuning for ACORN construction
-        M_ = M * gamma_;              // increase edges of data points
-        M_beta_ = std::ceil(M_ / 2);  // TODO tuning for ACORN construction
-
+        M_ = M * gamma_;  // increase edges of data points
+        // for ACORN-1 search, M_beta_ = M, 2-hop search with all M_beta_ edges
+        // for simply integrate with origin HNSW without ACORN construction,
+        // we set M_beta_ = 0 to consider all M_ edeges for its 2-hop search
+        M_beta_ = 0;
         maxM_ = M_;
         maxM0_ = M_ * 2;
         ef_construction_ = std::max(ef_construction, M_);
@@ -432,6 +434,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             metric_distance_computations += size;
         }
         float kAlpha = bitset.filter_ratio() / 2.0f;
+
+        // 2-hop search
+        knowhere::ResultMaxHeap<dist_t, labeltype> candidates(M_);
         // ACORN: 读前M_beta个节点，如果节点被过滤，不考虑；(M_beta, maxM0]的节点，读2-hop邻居节点 (连通性扩展)
         for (size_t i = 1; i <= M_beta_; ++i) {
             if (i + 1 <= M_beta_) {
@@ -458,12 +463,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             // }
 
             dist_t dist = calcDistance(data_point, v);
-            Neighbor nn(v, dist, status);
-            if (add_search_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
-#endif
-            }
+            candidates.Push(dist, v);
+            //             Neighbor nn(v, dist, status);
+            //             if (add_search_candidate(nn)) {
+            // #if defined(USE_PREFETCH)
+            //                 _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
+            // #endif
+            //             }
         }
 
         for (size_t i = M_beta_ + 1; i <= size; ++i) {
@@ -484,7 +490,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 }
                 visited[v2] = true;
                 int status = Neighbor::kValid;
-                without candidate
+                // without candidate
                 if (has_deletions && bitset.test(int64_t(v2))) {
                     continue;
                 }
@@ -498,12 +504,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 //     accumulative_alpha -= 1.0f;
                 // }
                 dist_t dist2 = calcDistance(data_point, v2);
-                Neighbor nn(v2, dist2, status);
-                if (add_search_candidate(nn)) {
-#if defined(USE_PREFETCH)
-                    _mm_prefetch(get_linklist0(v2), _MM_HINT_T0);
-#endif
-                }
+                candidates.Push(dist2, v2);
+                //                 Neighbor nn(v2, dist2, status);
+                //                 if (add_search_candidate(nn)) {
+                // #if defined(USE_PREFETCH)
+                //                     _mm_prefetch(get_linklist0(v2), _MM_HINT_T0);
+                // #endif
+                //                 }
             }
             // check 1-hop neighbor
             if (visited[v]) {
@@ -525,7 +532,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             //     accumulative_alpha -= 1.0f;
             // }
             dist_t dist = calcDistance(data_point, v);
-            Neighbor nn(v, dist, status);
+            candidates.Push(dist, v);
+            //             Neighbor nn(v, dist, status);
+            //             if (add_search_candidate(nn)) {
+            // #if defined(USE_PREFETCH)
+            //                 _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
+            // #endif
+            //             }
+        }
+        // Get M neighbors for greedy search
+        while (candidates.Size()) {
+            auto [dist, v] = candidates.Pop().value();
+            Neighbor nn(v, dist, Neighbor::kValid);
             if (add_search_candidate(nn)) {
 #if defined(USE_PREFETCH)
                 _mm_prefetch(get_linklist0(v), _MM_HINT_T0);
@@ -544,8 +562,9 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         //             }
         //             visited[v] = true;
         //             int status = Neighbor::kValid;
-        //             if (has_deletions && bitset.test((int64_t)v)) {  //
-        //             如果节点被过滤掉，置成Invalid，但依旧放入BFS的队列
+        //             if (has_deletions && bitset.test((int64_t)v)) {
+        //                 // 如果节点被过滤掉，置成Invalid，但依旧放入BFS的队列
+
         //                 status = Neighbor::kInvalid;
 
         //                 accumulative_alpha += kAlpha;
@@ -1412,9 +1431,6 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
             for (int level = maxlevel_; level > 0; level--) {
                 bool changed = true;
-                if (feder_result != nullptr) {
-                    feder_result->visit_info_.AddLevelVisitRecord(level);
-                }
                 while (changed) {
                     changed = false;
                     unsigned int* data;
@@ -1431,12 +1447,26 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         tableint cand = datal[i];
                         if (cand < 0 || cand > max_elements_)
                             throw std::runtime_error("cand error");
-                        dist_t d = calcDistance(query_data, cand);
-                        if (feder_result != nullptr) {
-                            feder_result->visit_info_.AddVisitRecord(level, currObj, cand, d);
-                            feder_result->id_set_.insert(currObj);
-                            feder_result->id_set_.insert(cand);
+                        // 2-hop search
+                        unsigned int* data_2hop;
+                        data_2hop = (unsigned int*)get_linklist(cand, level);
+                        int size_2hop = getListCount(data_2hop);
+                        tableint *datal_2hop = (tableint*)(data_2hop + 1);
+                        for (int j = 0; j < size_2hop; ++j) {
+                            prefetchData(datal_2hop[j]);
                         }
+                        for (int j = 0; j < size_2hop; j++) {
+                            tableint cand_2hop = datal_2hop[j];
+                            if (cand_2hop < 0 || cand_2hop > max_elements_)
+                                throw std::runtime_error("cand error");
+                            dist_t d = calcDistance(query_data, cand_2hop);
+                            if (d < curdist) {
+                                curdist = d;
+                                currObj = cand_2hop;
+                                changed = true;
+                            }
+                        }
+                        dist_t d = calcDistance(query_data, cand);
 
                         if (d < curdist) {
                             curdist = d;
