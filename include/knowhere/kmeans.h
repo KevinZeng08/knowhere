@@ -28,6 +28,8 @@ class KMeans {
     KMeans(size_t K, size_t dim, bool verbose = true) : dim_(dim), n_centroids_(K), verbose_(verbose) {
     }
 
+    KMeans(KMeans&&) = default;
+
     void
     fit(const VecT* vecs, size_t n, size_t max_iter = 10, uint32_t random_state = 0, std::string_view init = "random",
         std::string_view algorithm = "lloyd");
@@ -46,6 +48,17 @@ class KMeans {
         return centroid_id_mapping_;
     }
 
+    std::vector<std::vector<uint32_t>>&
+    get_result_ids(size_t n) {
+        if (result_ids_.empty()) {
+            result_ids_.resize(n_centroids_);
+            for (size_t i = 0; i < n; ++i) {
+                result_ids_[centroid_id_mapping_[i]].push_back(i);
+            }
+        }
+        return result_ids_;
+    }
+
     ~KMeans() {
     }
 
@@ -53,6 +66,7 @@ class KMeans {
     size_t dim_, n_centroids_;
     std::unique_ptr<VecT[]> centroids_;
     std::unique_ptr<uint32_t[]> centroid_id_mapping_;
+    std::vector<std::vector<uint32_t>> result_ids_;
 
     bool verbose_ = true;
 
