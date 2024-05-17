@@ -15,6 +15,7 @@
 #include <fstream>
 #include <string_view>
 #include <vector>
+#include <mutex>
 
 #include "knowhere/config.h"
 #include "knowhere/dataset.h"
@@ -28,7 +29,9 @@ class KMeans {
     KMeans(size_t K, size_t dim, bool verbose = true) : dim_(dim), n_centroids_(K), verbose_(verbose) {
     }
 
-    KMeans(KMeans&&) = default;
+    KMeans(KMeans&& other): dim_(other.dim_), n_centroids_(other.n_centroids_), verbose_(other.verbose_),
+                            centroids_(std::move(other.centroids_)), centroid_id_mapping_(std::move(other.centroid_id_mapping_)), result_ids_(std::move(other.result_ids_)) {
+    }
 
     void
     fit(const VecT* vecs, size_t n, size_t max_iter = 10, uint32_t random_state = 0, std::string_view init = "random",
@@ -48,15 +51,20 @@ class KMeans {
         return centroid_id_mapping_;
     }
 
-    std::vector<std::vector<uint32_t>>&
-    get_result_ids(size_t n) {
-        if (result_ids_.empty()) {
-            result_ids_.resize(n_centroids_);
-            for (size_t i = 0; i < n; ++i) {
-                result_ids_[centroid_id_mapping_[i]].push_back(i);
-            }
-        }
+    const std::vector<std::vector<uint32_t>>&
+    get_result_ids() {
         return result_ids_;
+    }
+
+    void calculate_result_ids(size_t n) {
+        result_ids_.resize(n_centroids_);
+        for (int i = 0; i < n; ++i) {
+            result_ids_[centroid_id_mapping_[i]].push_back(i);
+        }
+    }
+
+    size_t get_n_centroids() {
+        return n_centroids_;
     }
 
     ~KMeans() {
