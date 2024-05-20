@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-level1_ratios = [0.01, 0.02, 0.05, 0.1]
-df = pd.read_csv('/home/ubuntu/kevin/knowhere/build/2level_result.txt')
+level1_ratios = [1]
+df = pd.read_csv('/home/ubuntu/kevin/knowhere/build/without_1level_result.txt')
 data = df.values.tolist()
 # 假设CSV数据已经加载到这个列表中
 # data = [
@@ -26,13 +26,12 @@ for level1_ratio in level1_ratios:
     plt.figure(figsize=(10, 5))
 
     ax1 = plt.gca()
-    ax1.set_xlabel('total search data size')
+    ax1.set_xlabel('level2 search data size')
     ax1.set_ylabel('recall')
-    ax1.plot(search_data_sizes, recalls, marker='o', color='r')
+    ax1.plot(search_ratio_level2, recalls, marker='o', color='r')
 
-    ax2 = ax1.twiny()
-    ax2.set_xlabel('level2 search data size')
-    ax2.plot(search_ratio_level2, recalls, marker='^', color='b')
+    # ax2 = ax1.twiny()
+    # ax2.set_xlabel('level2 search data size')
 
     # 绘制曲线
     # plt.plot(search_ratio_level2, recalls, marker='o')
@@ -41,4 +40,23 @@ for level1_ratio in level1_ratios:
     # plt.ylabel('Recall')
     plt.grid(True)
     plt.savefig(f'recall_vs_search_data_size_{level1_ratio}.png')
-    # plt.clf()
+    plt.clf()
+
+# total data size vs. recall
+# 提取level1_ratio=0.05，search-data-size和recall的数据
+markers = ['o', '^', 'd', 's', 'p']
+colors = ['r', 'b', 'g', 'y', 'm']
+plt.figure(figsize=(10, 5))
+for i, level1_ratio in enumerate(level1_ratios):
+    data2 = [row for row in data if row[0] == level1_ratio]
+    search_data_sizes = [row[3] for row in data2]
+    recalls = [row[2] for row in data2]
+
+    ax1 = plt.gca()
+    ax1.set_xlabel('total data size')
+    ax1.set_ylabel('recall')
+    ax1.plot(search_data_sizes, recalls, marker=markers[i], color=colors[i])
+
+plt.legend([f'level1_ratio={level1_ratio}' for level1_ratio in level1_ratios])
+plt.grid(True)
+plt.savefig('recall_vs_total_data_size.png')
