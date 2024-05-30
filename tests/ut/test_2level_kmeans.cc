@@ -129,13 +129,12 @@ const size_t num_clusters_level1 = 128;
 const size_t num_clusters_level2 = 1024;
 const size_t min_points_per_centroid = 39;
 #define KMEANS_LEVEL_1
-#define KMEANS_LEVEL_2
+// #define KMEANS_LEVEL_2
 // #define TEST
 
-void
-two_level_kmeans() {
-    // read data
-    size_t topk = 100;
+#define READ_DATA
+// read data
+size_t topk = 100;
 #ifdef TEST
     auto train_ds = GenDataSet(1000000, 128);
     auto query_ds = GenDataSet(10, 128);
@@ -160,6 +159,11 @@ two_level_kmeans() {
     // ReadGt(gt_file, gt_ids);
 #endif
 
+READ_DATA
+
+void
+two_level_kmeans() {
+
     size_t K1 = num_clusters_level1;
     float* base_vecs = (float*)train_ds->GetTensor();
     int64_t nb = train_ds->GetRows();
@@ -175,9 +179,9 @@ two_level_kmeans() {
     auto& centroids = kmeans.get_centroids();
     auto& result_ids = kmeans.get_result_ids();
 #ifdef KMEANS_LEVEL_1
-    std::ofstream out("1level_result.txt");
+    std::ofstream out("1level_result_" + std::to_string(num_clusters_level1) + ".txt");
     out << "search_ratio,recall,search_data_size" << std::endl;
-    std::vector<float> search_ratios{0.01, 0.02, 0.05, 0.1};
+    std::vector<float> search_ratios{0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1};
     for (float search_ratio : search_ratios) {
         size_t nprobe1 = search_ratio * K1;
         std::vector<int> corrects(nq, 0);
@@ -259,7 +263,7 @@ two_level_kmeans() {
     }
     tr.ElapseFromBegin("finish 2-level kmeans");
     // query 2 level, calculate recall
-    std::ofstream out2("2level_result.txt");
+    std::ofstream out2("2level_result_" + std::to_string(num_clusters_level1) + ".txt");
     out2 << "search_ratio1,search_ratio2,recall,search_data_size" << std::endl;
     std::vector<float> search_ratios_level1{0.01, 0.02, 0.05, 0.1};
     std::vector<float> search_ratios_level2{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
@@ -347,31 +351,6 @@ two_level_kmeans() {
 
 void
 one_level_kmeans() {
-    // read data
-    size_t topk = 100;
-#ifdef TEST
-    auto train_ds = GenDataSet(1000000, 128);
-    auto query_ds = GenDataSet(10, 128);
-    // groundtruth
-    const knowhere::Json conf = {
-        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
-        {knowhere::meta::TOPK, topk},
-    };
-    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
-    const int64_t* gt_ids = (gt.value())->GetIds();
-#else
-    auto train_ds = ReadDataset(base_file, 4000000);
-    auto query_ds = ReadDataset(query_file);
-    // groundtruth
-    const knowhere::Json conf = {
-        {knowhere::meta::METRIC_TYPE, knowhere::metric::L2},
-        {knowhere::meta::TOPK, topk},
-    };
-    auto gt = knowhere::BruteForce::Search<knowhere::fp32>(train_ds, query_ds, conf, nullptr);
-    const int64_t* gt_ids = (gt.value())->GetIds();
-    // int64_t* gt_ids = new int64_t[query_ds->GetRows() * topk];
-    // ReadGt(gt_file, gt_ids);
-#endif
 
     float* base_vecs = (float*)train_ds->GetTensor();
     int64_t nb = train_ds->GetRows();
@@ -407,7 +386,7 @@ one_level_kmeans() {
     }
     tr.ElapseFromBegin("finish 1-level kmeans");
     // query 1 level, calculate recall
-    std::ofstream out("without_1level_result.txt");
+    std::ofstream out("without_1level_result_" + std::to_string(num_clusters_level1) + ".txt");
     out << "seach_ratio1,search_ratio2,recall,search_data_size" << std::endl;
     std::vector<float> search_ratios_level1{1};
     std::vector<float> search_ratios_level2{0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1};
@@ -478,7 +457,7 @@ one_level_kmeans() {
 
 int
 main(int argc, char** argv) {
-    // two_level_kmeans();
-    one_level_kmeans();
+    two_level_kmeans();
+    // one_level_kmeans();
     return 0;
 }
